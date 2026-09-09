@@ -18,12 +18,29 @@ export function basePackageName(name) {
   return (parts[0].startsWith('@') ? parts.slice(0, 2) : parts.slice(0, 1)).join('/')
 }
 
+/** 前导噪声形如 `$ node …` / `> pkg …`，不属于 YAML；据此定位首个可能是 YAML 入口的行。 */
+function isYamlEntryLine(line) {
+  const t = (line ?? '').trimStart()
+  if (t === '') return true
+  if (t.startsWith('#') || t.startsWith('-') || /^\S.*:\s*/.test(t) || t.startsWith('|') || t.startsWith('>')) return true
+  return false
+}
+
 export function parseDump(text) {
-  const doc = YAML.parseDocument(text)
-  if (doc.errors.length > 0) throw new Error(`dump 输出解析失败：${doc.errors[0].message}`)
-  const rows = doc.toJS() ?? []
-  if (!Array.isArray(rows)) throw new Error('dump 输出应为行数组')
-  return rows.filter((r) => r !== null && typeof r === 'object' && typeof r.id === 'string')
+  const lines = String(text ?? '').split(/\r?\n/)
+  // 合并输出若带 pnpm 横幅等前导噪声，依次丢弃前导非 YAML 行，取首个可解析为行数组的文档。
+  for (let start = 0; start < lines.length; start += 1) {
+    if (!isYamlEntryLine(lines[start])) continue
+    const doc = YAML.parseDocument(lines.slice(start).join('\n'))
+    if (doc.errors.length === 0) {
+      const rows = doc.toJS() ?? []
+      if (Array.isArray(rows)) {
+        return rows.filter((r) => r !== null && typeof r === 'object' && typeof r.id === 'string')
+      }
+    }
+  }
+  const err = YAML.parseDocument(text).errors[0]
+  throw new Error(`dump 输出解析失败：${err?.message ?? '无法识别为行数组'}`)
 }
 
 /** 在 packages 的 group/pkg 两级中定位给定（包名或其子路径所属）包目录；找不到返回 null。 */

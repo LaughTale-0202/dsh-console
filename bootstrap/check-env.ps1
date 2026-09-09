@@ -71,5 +71,22 @@ if (-not $nodeCmd) {
 $env:Path = "$(Split-Path -Parent $nodeCmd);$env:Path"
 $env:COREPACK_ENABLE_DOWNLOAD_PROMPT = '0'
 Write-Host "+ Node $(& $nodeCmd -v)"
-& $nodeCmd (Join-Path $toolDir 'app\main.js')
+
+# 任何启动失败都保留窗口并提示，避免“闪一下就消失、看不到报错”。
+try {
+  & $nodeCmd (Join-Path $toolDir 'app\main.js')
+} catch {
+  Write-Host ""
+  Write-Host "x 程序启动失败：" -ForegroundColor Red
+  Write-Host "  $($_.Exception.Message)"
+  Write-Host "  详情见 $toolDir\data\logs\fatal.log"
+  Read-Host "  按 Enter 退出"
+  exit 1
+}
+if ($LASTEXITCODE -ne 0) {
+  Write-Host ""
+  Write-Host "x 程序异常退出（码 $LASTEXITCODE）。" -ForegroundColor Red
+  Write-Host "  详情见 $toolDir\data\logs\fatal.log"
+  Read-Host "  按 Enter 退出"
+}
 exit $LASTEXITCODE

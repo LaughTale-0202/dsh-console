@@ -59,21 +59,35 @@ export function makeLineFeeder(onLine) {
 }
 
 /** 通用子进程执行：tail 保留最近 maxTail 行（0=不限，dump 场景用），实时回调 onLine；
- * 传 logFile 时完整输出追加落盘（规格 §8 长任务日志，目录由调用方创建）。 */
+ * 传 logFile 时完整输出追加落盘（规格 §8 长任务日志，目录由调用方创建）。
+ *
+ * stdout 与 stderr 分轨采集：tail 仍为合并输出（供日志/回显与错误摘录），另把 stdout
+ * 单独留存 stdoutLines，供需要机器可解析文本的调用方（如 `--dump-config` 的 YAML）。
+ * pnpm/corepack 会把自己的命令横幅 `$ node …` 与警告写到 stderr，若混入解析文本会破坏格式。 */
 export function runCommand({ cmd, args, cwd, env, onLine, maxTail = 200, logFile }) {
   return new Promise((resolve) => {
     const child = spawn(cmd, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] })
     const tail = []
-    const feeder = makeLineFeeder((line) => {
+    const stdoutLines = []
+    const merged = makeLineFeeder((line) => {
       tail.push(line)
       if (maxTail > 0 && tail.length > maxTail) tail.shift()
       onLine?.(line)
       if (logFile !== undefined) { try { appendFileSync(logFile, line + '\n', 'utf8') } catch { /* 日志失败不阻塞主流程 */ } }
     })
-    child.stdout.on('data', (c) => feeder.feed(c))
-    child.stderr.on('data', (c) => feeder.feed(c))
-    child.on('error', (error) => resolve({ code: -1, tail: [...tail, String(error.message)] }))
-    child.on('exit', (code) => { feeder.end(); resolve({ code: code ?? -1, tail }) })
+    const stdoutOnly = makeLineFeeder((line) => stdoutLines.push(line))
+    const hOut = (c) => { merged.feed(c); stdoutOnly.feed(c) }
+    const hErr = (c) => merged.feed(c)
+    child.stdout.on('data', hOut)
+    child.stderr.on('data', hErr)
+    const settle = (code, errMsg) => {
+      merged.end()
+      stdoutOnly.end()
+      const out = errMsg ? { code: code ?? -1, tail: [...tail, errMsg], stdoutLines } : { code: code ?? -1, tail, stdoutLines }
+      resolve(out)
+    }
+    child.on('error', (error) => settle(-1, String(error.message)))
+    child.on('exit', (code) => settle(code))
   })
 }
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /** dsh 控制台主程序：装配 UI、config 与生命周期（状态首页 / 启动重启 / 插件 / 模型 / 预设 / 更新）。 */
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, appendFileSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
@@ -67,6 +67,8 @@ function overlayPatches() {
 }
 
 async function confirmStopOwners(port) {
+  // 探测会起 PowerShell，先给即时反馈再等结果。
+  paint([renderHeader('dsh 控制台'), '', `  ${S.cyan}⠹ 正在检测端口 ${String(port)} 占用…${S.reset}`, ''])
   const owners = await findPortOwners(port)
   if (owners.length === 0) return { owners, yes: true }
   const names = owners.map((o) => `${o.name}(PID ${String(o.pid)})`).join('、')
@@ -155,6 +157,7 @@ async function showError(error) {
 }
 
 async function offerRestart() {
+  paint([renderHeader('插件管理'), '', `  ${S.cyan}⠹ 正在检测服务端口…${S.reset}`, ''])
   const owners = await findPortOwners(CONFIG.service.port)
   if (owners.length === 0) return
   const yes = await askYesNo(['  插件改动重启后生效。', ''], 'Enter 现在重启 · Esc 稍后')
@@ -251,44 +254,68 @@ async function safeAction(name, fn) {
   try { await fn() } catch (error) { await showError(error) }
 }
 
+/** 服务占用缓存：避免每次重绘主菜单都阻塞在慢速 PowerShell 探测上。
+ * value 为最近一次成功结果；refresh 返回时若当前仍在该菜单实例则回调 repaint。
+ * 内部自吞错误，永不抛未处理拒绝（否则 Node ≥15 会直接终止进程导致“闪退”）。 */
+const ownersCache = { value: [], pending: null, lastError: null }
+
+async function probeServiceOwners() {
+  if (ownersCache.pending === null) {
+    ownersCache.pending = findPortOwners(CONFIG.service.port)
+      .then((o) => { ownersCache.value = Array.isArray(o) ? o : []; ownersCache.lastError = null; return ownersCache.value })
+      .catch((e) => { ownersCache.lastError = e; ownersCache.value = [] })
+      .finally(() => { ownersCache.pending = null })
+  }
+  return ownersCache.pending
+}
+
 async function mainLoop() {
+  // 首次进入先在后台预取一次，避免首屏冻结；value 为空表示尚在探测。
+  probeServiceOwners().catch(() => {})
   for (;;) {
-    const owners = await findPortOwners(CONFIG.service.port)
-    const snap = statusSnapshot({ config: CONFIG, owners, settingsDoc: readSettingsDoc(DSH_HOME) })
     const items = menuItems()
     let sel = 0
-    await new Promise((resolve) => {
-      const draw = () => paint([
+    let menuOpen = true
+    let stopInputFn = null
+    const snap = () => statusSnapshot({ config: CONFIG, owners: ownersCache.value, settingsDoc: readSettingsDoc(DSH_HOME) })
+    const draw = () => {
+      const s = snap()
+      paint([
         renderHeader('dsh 控制台', 'v0.1.0'), '',
         renderStatusRow('项目', String(CONFIG.project.path ?? '未设置')),
-        renderStatusRow('服务', `${snap.service} · ${snap.url}`, owners.length > 0 ? 'ok' : 'off'),
-        renderStatusRow('模型', snap.model),
-        renderStatusRow('构建', snap.build),
-        renderStatusRow('预设', snap.preset),
+        renderStatusRow('服务', `${s.service} · ${s.url}`, ownersCache.value.length > 0 ? 'ok' : 'off'),
+        renderStatusRow('模型', s.model),
+        renderStatusRow('构建', s.build),
+        renderStatusRow('预设', s.preset),
         renderRule(), '',
         ...renderMenu({ items, selected: sel }),
         '', renderFooter('↑↓ 选择 · Enter 确认 · q 退出'),
       ])
-      const stop = startInput((k) => {
+    }
+    const close = () => { menuOpen = false; stopInputFn?.() }
+    const pick = await new Promise((resolve) => {
+      stopInputFn = startInput((k) => {
         if (k.type === 'up') sel = (sel + items.length - 1) % items.length
         if (k.type === 'down') sel = (sel + 1) % items.length
-        if (k.type === 'enter') { stop(); resolve(sel) }
-        if (k.type === 'ctrl-c' || (k.type === 'char' && k.ch === 'q')) { stop(); resolve(items.length - 1) }
+        if (k.type === 'enter') { close(); resolve(sel) }
+        if (k.type === 'ctrl-c' || (k.type === 'char' && k.ch === 'q')) { close(); resolve(items.length - 1) }
         draw()
       })
+      // 后台刷新占用状态；期间仍在主菜单则原位刷新“服务”行，避免回菜单时先卡等探测。
+      probeServiceOwners().then(() => { if (menuOpen) draw() }).catch(() => {})
       draw()
     })
     const last = items.length - 1
-    if (sel === last) return
-    if (sel === 0) await safeAction('启动', actionStart)
-    if (sel === 1) await safeAction('重启', actionRestart)
-    if (sel === 2) await safeAction('停止', async () => { await actionStop(); process.stdout.write(`\r\n  ${S.green}✓ 已停止${S.reset}\r\n`) })
-    if (sel === 3) await safeAction('插件管理', () => pluginsPage(ctx(), { restartHook: offerRestart }))
-    if (sel === 4) await safeAction('模型与凭据', () => modelPage(ctx()))
-    if (sel === 5) await safeAction('启动预设', () => presetsPage(ctx()))
-    if (sel === 6) await safeAction('项目更新', () => updatePage(ctx(), { restartHook: offerRestart }))
-    if (sel === 7) await safeAction('快捷打开', actionOpen)
-    if (sel === 8) await safeAction('工具设置', actionSettings)
+    if (pick === last) return
+    if (pick === 0) await safeAction('启动', actionStart)
+    if (pick === 1) await safeAction('重启', actionRestart)
+    if (pick === 2) await safeAction('停止', async () => { await actionStop(); process.stdout.write(`\r\n  ${S.green}✓ 已停止${S.reset}\r\n`) })
+    if (pick === 3) await safeAction('插件管理', () => pluginsPage(ctx(), { restartHook: offerRestart }))
+    if (pick === 4) await safeAction('模型与凭据', () => modelPage(ctx()))
+    if (pick === 5) await safeAction('启动预设', () => presetsPage(ctx()))
+    if (pick === 6) await safeAction('项目更新', () => updatePage(ctx(), { restartHook: offerRestart }))
+    if (pick === 7) await safeAction('快捷打开', actionOpen)
+    if (pick === 8) await safeAction('工具设置', actionSettings)
   }
 }
 
@@ -315,5 +342,20 @@ export async function run() {
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  run().then(() => process.exit(0), (error) => { console.error(error); process.exit(1) })
+  // 任何未捕获错误/未处理拒绝都不允许“无提示闪退”：写日志、保留窗口再退出。
+  const fatal = (kind, error) => {
+    try {
+      const text = `[${new Date().toISOString()}] ${kind}: ${String(error && error.stack ? error.stack : error)}\n`
+      mkdirSync(LOGS_DIR, { recursive: true })
+      appendFileSync(join(LOGS_DIR, 'fatal.log'), text, 'utf8')
+      process.stdout.write(`\r\n  ${S.red}✗ 程序异常退出（${kind}）：${S.reset}${String(error && error.message ? error.message : error).split('\n')[0]}\r\n  ${S.dim}详情见 data/logs/fatal.log${S.reset}\r\n`)
+      if (process.stdin.isTTY) {
+        process.stdin.setRawMode?.(false)
+      }
+    } catch { /* 兜底：仍退出 */ }
+    process.exit(1)
+  }
+  process.on('unhandledRejection', (reason) => fatal('未处理的 Promise 拒绝', reason))
+  process.on('uncaughtException', (error) => fatal('未捕获异常', error))
+  run().then(() => process.exit(0), (error) => fatal('启动失败', error))
 }

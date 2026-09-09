@@ -42,6 +42,13 @@ test('解析 dump：保留 id/name/disabled，容忍 !!js 与注释', () => {
   assert.equal(rows.find((r) => r.id === 'llm').disabled, undefined)
 })
 
+test('解析 dump：容忍前导 pnpm 横幅（stderr 混入）', () => {
+  const noisy = `$ node --import tsx/esm apps/cli/src/bin.ts "web" "--dump-config"\n${DUMP}`
+  const rows = parseDump(noisy)
+  assert.equal(rows.length, 5)
+  assert.ok(rows.some((r) => r.id === 'session'))
+})
+
 test('分类与描述', () => {
   const root = fakeProject()
   assert.equal(classifyRow({ id: 'webserver', name: '@deepseek-ai/dsh-host-webserver' }, root), 'system')

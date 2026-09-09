@@ -10,6 +10,17 @@ export function parsePids(stdout) {
   return [...seen]
 }
 
+/** 解析单次探测输出：每行 `PID<TAB>name`。 */
+export function parseOwners(stdout) {
+  const owners = []
+  for (const line of stdout.split(/\r?\n/)) {
+    const m = /^(\d+)\t(.*)$/.exec(line.trim())
+    if (!m) continue
+    owners.push({ pid: Number(m[1]), name: m[2] || '未知' })
+  }
+  return owners
+}
+
 export function isNodeFamily(name) {
   const n = (name ?? '').toLowerCase().replace(/\.exe$/, '')
   return n === 'node' || n === 'pnpm' || n === 'npm' || n === 'corepack'
@@ -28,16 +39,18 @@ export function runPs(command, { sta = false } = {}) {
 }
 
 export async function findPortOwners(port) {
-  const out = await runPs(`$ErrorActionPreference = 'SilentlyContinue'; @(Get-NetTCPConnection -LocalPort ${port} -State Listen).ForEach({ $_.OwningProcess })`)
-  const owners = []
-  for (const pid of parsePids(out)) {
-    let name = ''
-    try {
-      name = (await runPs(`Get-Process -Id ${pid} -ErrorAction SilentlyContinue | Select-Object -ExpandProperty ProcessName`)).trim()
-    } catch { name = '' }
-    owners.push({ pid, name: name || '未知' })
+  // 单次 PowerShell 探测：一次拿到 占用进程 PID 与进程名，避免对每个 PID 再起进程。
+  // 任何失败都返回空（视为无占用），绝不外抛——否则主菜单/启动的前台探测可能被未处理拒绝弄崩。
+  try {
+    const cmd =
+      `$ErrorActionPreference = 'SilentlyContinue'; ` +
+      `Get-NetTCPConnection -LocalPort ${port} -State Listen | ForEach-Object { ` +
+      `$p = $_.OwningProcess; $n = (Get-Process -Id $p -ErrorAction SilentlyContinue).ProcessName; "$p\`t$n" }`
+    const out = await runPs(cmd)
+    return parseOwners(out)
+  } catch {
+    return []
   }
-  return owners
 }
 
 export async function killTree(pid) {
