@@ -3,8 +3,9 @@ import { spawn } from 'node:child_process'
 import { appendFileSync } from 'node:fs'
 import { findPortOwners, killTree } from './port.js'
 
-/** 服务启动成功时从输出中解析的 URL 行特征。dsh web 以「dsh web: <url>」报告其地址。 */
-export const URL_LINE = /^dsh web:\s*(\S+)/
+/** 服务启动成功时从 stdout 解析的 URL 行：`dsh web: http://…/?token=…`。
+ * 仅匹配 http:// 开头，避免误吞随后的 “opening the default browser” 提示行。 */
+export const URL_LINE = /^dsh web:\s+(http\S+)/
 
 export function nodeVersionOk(v) {
   const m = /^v?(\d+)\.(\d+)\.(\d+)/.exec(v ?? '')
@@ -22,11 +23,13 @@ export function planGates({ nodeModulesExists, lockMtime, pkgMtime, lastInstallA
   }
 }
 
+/** dsh 启动命令组装。要点：`--patch` 属启动器级选项，必须排在应用级（--port/--no-open）之前，
+ * 因为启动器在遇到第一个非自身选项后即停止解析后续 `--patch`。 */
 export function buildDshCommand({ port = 3080, autoOpenBrowser = true, patches = [] }) {
   const args = ['pnpm', 'dsh', 'web']
+  for (const p of patches) args.push('--patch', p)
   if (port !== 3080) args.push('--port', String(port))
   if (!autoOpenBrowser) args.push('--no-open')
-  for (const p of patches) args.push('--patch', p)
   return args
 }
 

@@ -26,10 +26,10 @@ test('闸门判定', () => {
   )
 })
 
-test('dsh 命令组装', () => {
+test('dsh 命令组装：patch 先于应用级选项', () => {
   assert.deepEqual(buildDshCommand({}), ['pnpm', 'dsh', 'web'])
   assert.deepEqual(buildDshCommand({ port: 8080, autoOpenBrowser: false, patches: ['C:\\x y\\p.yml'] }),
-    ['pnpm', 'dsh', 'web', '--port', '8080', '--no-open', '--patch', 'C:\\x y\\p.yml'])
+    ['pnpm', 'dsh', 'web', '--patch', 'C:\\x y\\p.yml', '--port', '8080', '--no-open'])
 })
 
 test('子进程 env 必含 corepack 非交互', () => {
