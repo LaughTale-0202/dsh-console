@@ -1,9 +1,10 @@
 {
   "name": "dsh-console",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
-  "description": "deepseek-harness 控制台启动器",
+  "description": "A small Windows console launcher & manager for deepseek-harness",
+  "license": "MIT",
+  "keywords": ["deepseek-harness", "console", "launcher", "windows", "cli"],
   "engines": { "node": "^22.19.0 || >=24.0.0" },
   "dependencies": { "yaml": "^2.8.0" },
   "scripts": { "test": "node --test --experimental-test-isolation=none \"app/**/*.test.js\"" }
