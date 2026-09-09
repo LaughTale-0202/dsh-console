@@ -53,3 +53,10 @@ export function confirmOnce({ title, lines, hint }) {
     })
   })
 }
+
+/** 等一次回车/任意键返回。 */
+export function awaitEnter() {
+  return new Promise((resolve) => {
+    const stop = startInput((k) => { if (k.type === 'enter' || k.type === 'esc' || k.type === 'ctrl-c') { stop(); resolve() } })
+  })
+}
