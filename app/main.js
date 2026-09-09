@@ -247,6 +247,10 @@ function menuItems() {
   ]
 }
 
+async function safeAction(name, fn) {
+  try { await fn() } catch (error) { await showError(error) }
+}
+
 async function mainLoop() {
   for (;;) {
     const owners = await findPortOwners(CONFIG.service.port)
@@ -276,15 +280,15 @@ async function mainLoop() {
     })
     const last = items.length - 1
     if (sel === last) return
-    if (sel === 0) await actionStart()
-    if (sel === 1) await actionRestart()
-    if (sel === 2) { await actionStop(); process.stdout.write(`\r\n  ${S.green}✓ 已停止${S.reset}\r\n`) }
-    if (sel === 3) await pluginsPage(ctx(), { restartHook: offerRestart })
-    if (sel === 4) await modelPage(ctx())
-    if (sel === 5) await presetsPage(ctx())
-    if (sel === 6) await updatePage(ctx(), { restartHook: offerRestart })
-    if (sel === 7) await actionOpen()
-    if (sel === 8) await actionSettings()
+    if (sel === 0) await safeAction('启动', actionStart)
+    if (sel === 1) await safeAction('重启', actionRestart)
+    if (sel === 2) await safeAction('停止', async () => { await actionStop(); process.stdout.write(`\r\n  ${S.green}✓ 已停止${S.reset}\r\n`) })
+    if (sel === 3) await safeAction('插件管理', () => pluginsPage(ctx(), { restartHook: offerRestart }))
+    if (sel === 4) await safeAction('模型与凭据', () => modelPage(ctx()))
+    if (sel === 5) await safeAction('启动预设', () => presetsPage(ctx()))
+    if (sel === 6) await safeAction('项目更新', () => updatePage(ctx(), { restartHook: offerRestart }))
+    if (sel === 7) await safeAction('快捷打开', actionOpen)
+    if (sel === 8) await safeAction('工具设置', actionSettings)
   }
 }
 
