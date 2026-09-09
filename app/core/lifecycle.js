@@ -37,25 +37,43 @@ export function childEnv(extra = {}) {
   return { ...process.env, COREPACK_ENABLE_DOWNLOAD_PROMPT: '0', ...extra }
 }
 
+/** 逐行喂入器：缓冲跨 chunk 的半行，仅按 \n 切割；end 时冲刷残余。 */
+export function makeLineFeeder(onLine) {
+  let pending = ''
+  return {
+    feed(chunk) {
+      pending += chunk.toString('utf8')
+      let idx
+      while ((idx = pending.indexOf('\n')) >= 0) {
+        const line = pending.slice(0, idx).replace(/\r$/, '')
+        pending = pending.slice(idx + 1)
+        if (line !== '') onLine(line)
+      }
+    },
+    end() {
+      const rest = pending.trimEnd()
+      if (rest !== '') onLine(rest)
+      pending = ''
+    },
+  }
+}
+
 /** 通用子进程执行：tail 保留最近 maxTail 行（0=不限，dump 场景用），实时回调 onLine；
  * 传 logFile 时完整输出追加落盘（规格 §8 长任务日志，目录由调用方创建）。 */
 export function runCommand({ cmd, args, cwd, env, onLine, maxTail = 200, logFile }) {
   return new Promise((resolve) => {
     const child = spawn(cmd, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] })
     const tail = []
-    const feed = (chunk) => {
-      for (const line of chunk.toString('utf8').split(/\r?\n/)) {
-        if (line === '') continue
-        tail.push(line)
-        if (maxTail > 0 && tail.length > maxTail) tail.shift()
-        onLine?.(line)
-        if (logFile !== undefined) { try { appendFileSync(logFile, line + '\n', 'utf8') } catch { /* 日志失败不阻塞主流程 */ } }
-      }
-    }
-    child.stdout.on('data', feed)
-    child.stderr.on('data', feed)
+    const feeder = makeLineFeeder((line) => {
+      tail.push(line)
+      if (maxTail > 0 && tail.length > maxTail) tail.shift()
+      onLine?.(line)
+      if (logFile !== undefined) { try { appendFileSync(logFile, line + '\n', 'utf8') } catch { /* 日志失败不阻塞主流程 */ } }
+    })
+    child.stdout.on('data', (c) => feeder.feed(c))
+    child.stderr.on('data', (c) => feeder.feed(c))
     child.on('error', (error) => resolve({ code: -1, tail: [...tail, String(error.message)] }))
-    child.on('exit', (code) => resolve({ code: code ?? -1, tail }))
+    child.on('exit', (code) => { feeder.end(); resolve({ code: code ?? -1, tail }) })
   })
 }
 
@@ -80,34 +98,35 @@ export function startService({ projectRoot, port, autoOpenBrowser, patches, env,
     let settled = false
     let url = null
     const tail = []
-    const feed = (chunk) => {
-      for (const line of chunk.toString('utf8').split(/\r?\n/)) {
-        if (line === '') continue
-        tail.push(line)
-        if (tail.length > 200) tail.shift()
-        onLine?.(line)
-        const m = URL_LINE.exec(line)
-        if (m && !url) {
-          url = m[1]
-          settled = true
-          resolve({ child, url, tail })
-        }
+    const onLineOut = (line) => {
+      tail.push(line)
+      if (tail.length > 200) tail.shift()
+      onLine?.(line)
+      const m = URL_LINE.exec(line)
+      if (m && !url) {
+        url = m[1]
+        settle(null, { child, url, tail })
       }
     }
-    child.stdout.on('data', feed)
-    child.stderr.on('data', feed)
+    const feeder = makeLineFeeder(onLineOut)
+    const hOut = (c) => feeder.feed(c)
+    const hErr = (c) => feeder.feed(c)
+    const detach = () => { child.stdout.off('data', hOut); child.stderr.off('data', hErr) }
+    const settle = (err, val) => {
+      if (settled) return
+      settled = true
+      detach()
+      clearTimeout(timer)
+      err ? reject(err) : resolve(val)
+    }
+    child.stdout.on('data', hOut)
+    child.stderr.on('data', hErr)
     child.on('exit', (code) => {
-      if (!settled) {
-        settled = true
-        reject(new Error(`服务进程提前退出（码 ${String(code)}）。最近输出：\n${tail.slice(-10).join('\n')}`))
-      }
+      settle(new Error(`服务进程提前退出（码 ${String(code)}）。最近输出：\n${tail.slice(-10).join('\n')}`))
     })
     const timer = setTimeout(() => {
-      if (!settled) {
-        settled = true
-        child.kill()
-        reject(new Error(`等待 dsh web: URL 行超时（${Math.round(timeoutMs / 1000)} 秒）`))
-      }
+      child.kill()
+      settle(new Error(`等待 dsh web: URL 行超时（${Math.round(timeoutMs / 1000)} 秒）`))
     }, timeoutMs)
     timer.unref()
   })

@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { nodeVersionOk, planGates, buildDshCommand, childEnv } from './lifecycle.js'
+import { nodeVersionOk, planGates, buildDshCommand, childEnv, makeLineFeeder } from './lifecycle.js'
 
 test('Node 版本闸：22.19 界限', () => {
   assert.equal(nodeVersionOk('v22.19.0'), true)
@@ -36,4 +36,13 @@ test('子进程 env 必含 corepack 非交互', () => {
   const env = childEnv({ FOO: '1' })
   assert.equal(env.COREPACK_ENABLE_DOWNLOAD_PROMPT, '0')
   assert.equal(env.FOO, '1')
+})
+
+test('逐行喂入：跨 chunk 的半行正确拼接并去 CR', () => {
+  const got = []
+  const f = makeLineFeeder((l) => got.push(l))
+  f.feed('dsh web: http://127.0.0.1:3080/?token=ab\r\nsecond')
+  f.feed(' line\r\n')
+  f.end()
+  assert.deepEqual(got, ['dsh web: http://127.0.0.1:3080/?token=ab', 'second line'])
 })
