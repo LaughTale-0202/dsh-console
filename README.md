@@ -3,8 +3,6 @@
 一个纯 Windows 控制台小工具，帮你**启动 / 重启 / 停止 / 配置**本机的
 [deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)（下称 dsh）Web 服务，并顺手管理插件与默认模型。
 
-面向非资深用户：所有操作都走菜单/向导，不需要手敲命令行。
-
 ![dsh-console 界面](docs/dsh-console.png)
 
 ## 快速开始
