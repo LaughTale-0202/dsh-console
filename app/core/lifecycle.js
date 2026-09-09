@@ -1,0 +1,118 @@
+/** 启动流水线：闸门判定（纯）+ 子进程执行（corepack pnpm / git / dsh web）。 */
+import { spawn } from 'node:child_process'
+import { appendFileSync } from 'node:fs'
+import { findPortOwners, killTree } from './port.js'
+
+/** 服务启动成功时从输出中解析的 URL 行特征。dsh web 以「dsh web: <url>」报告其地址。 */
+export const URL_LINE = /^dsh web:\s*(\S+)/
+
+export function nodeVersionOk(v) {
+  const m = /^v?(\d+)\.(\d+)\.(\d+)/.exec(v ?? '')
+  if (!m) return false
+  const maj = Number(m[1])
+  const min = Number(m[2])
+  return (maj === 22 && min >= 19) || maj >= 24
+}
+
+export function planGates({ nodeModulesExists, lockMtime, pkgMtime, lastInstallAt, gitHead, lastBuildHead }) {
+  const stale = Math.max(lockMtime ?? 0, pkgMtime ?? 0) > (lastInstallAt ?? 0)
+  return {
+    install: !nodeModulesExists || stale,
+    build: lastBuildHead === null || lastBuildHead === undefined || (gitHead !== null && gitHead !== lastBuildHead),
+  }
+}
+
+export function buildDshCommand({ port = 3080, autoOpenBrowser = true, patches = [] }) {
+  const args = ['pnpm', 'dsh', 'web']
+  if (port !== 3080) args.push('--port', String(port))
+  if (!autoOpenBrowser) args.push('--no-open')
+  for (const p of patches) args.push('--patch', p)
+  return args
+}
+
+export function childEnv(extra = {}) {
+  return { ...process.env, COREPACK_ENABLE_DOWNLOAD_PROMPT: '0', ...extra }
+}
+
+/** 通用子进程执行：tail 保留最近 maxTail 行（0=不限，dump 场景用），实时回调 onLine；
+ * 传 logFile 时完整输出追加落盘（规格 §8 长任务日志，目录由调用方创建）。 */
+export function runCommand({ cmd, args, cwd, env, onLine, maxTail = 200, logFile }) {
+  return new Promise((resolve) => {
+    const child = spawn(cmd, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] })
+    const tail = []
+    const feed = (chunk) => {
+      for (const line of chunk.toString('utf8').split(/\r?\n/)) {
+        if (line === '') continue
+        tail.push(line)
+        if (maxTail > 0 && tail.length > maxTail) tail.shift()
+        onLine?.(line)
+        if (logFile !== undefined) { try { appendFileSync(logFile, line + '\n', 'utf8') } catch { /* 日志失败不阻塞主流程 */ } }
+      }
+    }
+    child.stdout.on('data', feed)
+    child.stderr.on('data', feed)
+    child.on('error', (error) => resolve({ code: -1, tail: [...tail, String(error.message)] }))
+    child.on('exit', (code) => resolve({ code: code ?? -1, tail }))
+  })
+}
+
+export function gitHeadOf(root) {
+  return runCommand({ cmd: 'git', args: ['-C', root, 'rev-parse', 'HEAD'], cwd: root }).then((r) =>
+    r.code === 0 ? r.tail.at(-1)?.trim() ?? null : null)
+}
+
+/** corepack 是 .cmd：经 cmd.exe 执行；含空格的参数整体加引号。 */
+function corepackArgs(args) {
+  return ['/c', 'corepack', ...args.map((a) => (a.includes(' ') ? `"${a}"` : a))]
+}
+
+export function runPnpm({ projectRoot, args, env, onLine, maxTail, logFile }) {
+  return runCommand({ cmd: 'cmd.exe', args: corepackArgs(['pnpm', ...args]), cwd: projectRoot, env: childEnv(env), onLine, maxTail, logFile })
+}
+
+export function startService({ projectRoot, port, autoOpenBrowser, patches, env, onLine, timeoutMs = 120000 }) {
+  return new Promise((resolve, reject) => {
+    const args = corepackArgs(buildDshCommand({ port, autoOpenBrowser, patches }))
+    const child = spawn('cmd.exe', args, { cwd: projectRoot, env: childEnv(env), stdio: ['ignore', 'pipe', 'pipe'] })
+    let settled = false
+    let url = null
+    const tail = []
+    const feed = (chunk) => {
+      for (const line of chunk.toString('utf8').split(/\r?\n/)) {
+        if (line === '') continue
+        tail.push(line)
+        if (tail.length > 200) tail.shift()
+        onLine?.(line)
+        const m = URL_LINE.exec(line)
+        if (m && !url) {
+          url = m[1]
+          settled = true
+          resolve({ child, url, tail })
+        }
+      }
+    }
+    child.stdout.on('data', feed)
+    child.stderr.on('data', feed)
+    child.on('exit', (code) => {
+      if (!settled) {
+        settled = true
+        reject(new Error(`服务进程提前退出（码 ${String(code)}）。最近输出：\n${tail.slice(-10).join('\n')}`))
+      }
+    })
+    const timer = setTimeout(() => {
+      if (!settled) {
+        settled = true
+        child.kill()
+        reject(new Error(`等待 dsh web: URL 行超时（${Math.round(timeoutMs / 1000)} 秒）`))
+      }
+    }, timeoutMs)
+    timer.unref()
+  })
+}
+
+export async function stopPort(port) {
+  const owners = await findPortOwners(port)
+  const results = []
+  for (const { pid } of owners) results.push(await killTree(pid))
+  return { owners, results }
+}
