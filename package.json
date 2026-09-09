@@ -6,5 +6,5 @@
   "description": "deepseek-harness 控制台启动器",
   "engines": { "node": "^22.19.0 || >=24.0.0" },
   "dependencies": { "yaml": "^2.8.0" },
-  "scripts": { "test": "node --test app" }
+  "scripts": { "test": "node --test \"app/**/*.test.js\"" }
 }
