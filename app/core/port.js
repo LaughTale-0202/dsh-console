@@ -15,9 +15,9 @@ export function isNodeFamily(name) {
   return n === 'node' || n === 'pnpm' || n === 'npm' || n === 'corepack'
 }
 
-export function runPs(command) {
+export function runPs(command, { sta = false } = {}) {
   return new Promise((resolve, reject) => {
-    const p = spawn('powershell.exe', ['-NoProfile', '-Command', command], { stdio: ['ignore', 'pipe', 'pipe'] })
+    const p = spawn('powershell.exe', ['-NoProfile', ...(sta ? ['-STA'] : []), '-Command', command], { stdio: ['ignore', 'pipe', 'pipe'] })
     let out = ''
     let err = ''
     p.stdout.on('data', (c) => { out += c.toString('utf8') })
