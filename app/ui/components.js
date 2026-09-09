@@ -16,18 +16,19 @@ export function renderStatusRow(label, value, dot) {
   return `  ${S.dim}${padEnd(label, 6)}${S.reset} ${dotStr} ${value}`
 }
 
-export function renderMenu({ items, selected, width = 72 }) {
-  const rows = []
-  items.forEach((it, i) => {
+export function renderMenu({ items, selected }) {
+  const count = items.length
+  const digits = Math.max(1, String(count).length)
+  return items.map((it, i) => {
     const on = i === selected
-    const cursor = on ? `${S.accent}❯${S.reset} ` : '  '
+    const num = `${on ? S.accent : S.dim}${String(i + 1).padStart(digits)}.${S.reset}`
+    const cursor = on ? `${S.accent}❯${S.reset}` : ' '
     const label = padEnd(truncate(it.label, 20), 20)
     const hint = it.hint === undefined ? '' : `${S.dim}${truncate(it.hint ?? '', 34)}${S.reset}`
     const tag = it.tag === undefined ? '' : `${S.dim}${truncate(it.tag, 12)}${S.reset}`
-    const line = on ? `${S.inverse}${cursor}${label}${S.reset} ${hint} ${tag}` : `${cursor}${label} ${hint} ${tag}`
-    rows.push('  ' + line)
+    const labelOn = on ? `${S.inverse}${label}${S.reset}` : label
+    return `  ${cursor} ${num} ${labelOn} ${hint} ${tag}`
   })
-  return rows
 }
 
 export function renderFooter(hint) {

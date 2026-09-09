@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path'
 import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { S } from './ui/ansi.js'
-import { startInput, textInput } from './ui/input.js'
+import { startInput, textInput, digitSelect } from './ui/input.js'
 import { renderFooter, renderHeader, renderMenu, renderRule, renderStatusRow, SPINNER } from './ui/components.js'
 import { paint } from './ui/screen.js'
 import { DEFAULT_CONFIG, loadConfig, saveConfig } from './core/config.js'
@@ -120,22 +120,39 @@ async function actionRestart() {
 }
 
 async function tailView(service) {
+  // 一帧的固定开销行：标题、空行、URL 行、分隔线、空行、底栏 = 6 行。
+  // paint 落盘时会再写一个收尾换行，故再留 1 行余量，保证整帧 ≤ 一屏且不触底，
+  // 这样每次重绘都原地刷新，绝不把旧帧挤进滚动缓冲造成“越滚越多”。
+  const rows = typeof process.stdout.rows === 'number' && process.stdout.rows > 7 ? process.stdout.rows : 24
+  const maxTail = rows - 7
   let exited = false
-  service.child.on('exit', () => { exited = true })
+  let dirty = true
+  const tail = [...service.tail]
+  const draw = () => {
+    if (!dirty) return
+    dirty = false
+    paint([renderHeader('dsh 控制台 · 服务运行'), '',
+      `  ${exited ? S.red + '● 服务已退出' + S.reset : S.green + '● ' + S.reset + service.url}`, renderRule(),
+      ...tail.slice(-maxTail).map((l) => `  ${S.dim}${l.slice(0, 120)}${S.reset}`), '',
+      renderFooter('Esc 返回菜单（服务后台继续）')])
+  }
+  const feed = (chunk) => {
+    let changed = false
+    for (const l of chunk.toString('utf8').split(/\r?\n/)) {
+      if (l.trim() === '') continue
+      tail.push(l)
+      if (tail.length > 300) tail.shift()
+      changed = true
+    }
+    if (changed) { dirty = true; draw() }
+  }
+  service.child.stdout.on('data', feed)
+  service.child.stderr.on('data', feed)
+  service.child.on('exit', () => { exited = true; dirty = true; draw() })
+  draw()
   return new Promise((resolve) => {
-    let tail = [...service.tail]
-    const feed = (chunk) => { for (const l of chunk.toString('utf8').split(/\r?\n/)) if (l.trim() !== '') { tail.push(l); if (tail.length > 300) tail.shift() } }
-    service.child.stdout.on('data', feed)
-    service.child.stderr.on('data', feed)
-    const timer = setInterval(() => {
-      paint([renderHeader('dsh 控制台 · 服务运行'), '',
-        `  ${exited ? S.red + '● 服务已退出' + S.reset : S.green + '● ' + S.reset + service.url}`, renderRule(),
-        ...tail.slice(-18).map((l) => `  ${S.dim}${l.slice(0, 120)}${S.reset}`), '',
-        renderFooter('Esc 返回菜单（服务后台继续）')])
-      if (exited) clearInterval(timer)
-    }, 400)
     const stop = startInput((k) => {
-      if (k.type === 'esc' || k.type === 'ctrl-c') { clearInterval(timer); stop(); resolve() }
+      if (k.type === 'esc' || k.type === 'ctrl-c') { stop(); resolve() }
     })
   })
 }
@@ -176,10 +193,11 @@ async function actionOpen() {
   ]
   let sel = 0
   await new Promise((resolve) => {
-    const draw = () => paint([renderHeader('dsh 控制台 · 快捷打开'), '', ...renderMenu({ items, selected: sel }), '', renderFooter('↑↓ 选择 · Enter 确认 · Esc 返回')])
+    const draw = () => paint([renderHeader('dsh 控制台 · 快捷打开'), '', ...renderMenu({ items, selected: sel }), '', renderFooter('↑↓ / 数字 选择 · Enter 确认 · Esc 返回')])
     const stop = startInput((k) => {
       if (k.type === 'up') sel = (sel + items.length - 1) % items.length
       if (k.type === 'down') sel = (sel + 1) % items.length
+      const d = digitSelect(k, items.length); if (d >= 0) sel = d
       if (k.type === 'enter') { const t = items[sel].target; stop(); if (t) openPath(t); resolve() }
       if (k.type === 'esc' || k.type === 'ctrl-c') { stop(); resolve() }
       draw()
@@ -200,10 +218,11 @@ async function actionSettings() {
     const list = items()
     let sel = 0
     const pick = await new Promise((resolve) => {
-      const draw = () => paint([renderHeader('dsh 控制台 · 工具设置'), '', ...renderMenu({ items: list, selected: sel }), '', renderFooter('Enter 编辑 · Esc 返回')])
+      const draw = () => paint([renderHeader('dsh 控制台 · 工具设置'), '', ...renderMenu({ items: list, selected: sel }), '', renderFooter('↑↓ / 数字 选择 · Enter 编辑 · Esc 返回')])
       const stop = startInput((k) => {
         if (k.type === 'up') sel = (sel + list.length - 1) % list.length
         if (k.type === 'down') sel = (sel + 1) % list.length
+        const d = digitSelect(k, list.length); if (d >= 0) sel = d
         if (k.type === 'enter') { stop(); resolve(sel) }
         if (k.type === 'esc' || k.type === 'ctrl-c') { stop(); resolve(-1) }
         draw()
@@ -240,7 +259,7 @@ function menuItems() {
     { label: '启动服务', hint: '安装/构建 · 启动 dsh web' },
     { label: '重启服务', hint: '停止后重新启动' },
     { label: '停止服务', hint: '结束占用端口的服务进程' },
-    { label: '插件管理', hint: '启用/停用 · 系统与自定义分组' },
+    { label: '插件管理', hint: '启停 · 系统/自定义 区分与过滤' },
     { label: '模型与凭据', hint: '默认模型提供方配置' },
     { label: '启动预设（内网）', hint: '遥测/CA · 代理 · 镜像源' },
     { label: '项目更新', hint: 'pull → install → build → 重启' },
@@ -289,7 +308,7 @@ async function mainLoop() {
         renderStatusRow('预设', s.preset),
         renderRule(), '',
         ...renderMenu({ items, selected: sel }),
-        '', renderFooter('↑↓ 选择 · Enter 确认 · q 退出'),
+        '', renderFooter('↑↓ / 数字 选择 · Enter 确认 · q 退出'),
       ])
     }
     const close = () => { menuOpen = false; stopInputFn?.() }
@@ -297,6 +316,7 @@ async function mainLoop() {
       stopInputFn = startInput((k) => {
         if (k.type === 'up') sel = (sel + items.length - 1) % items.length
         if (k.type === 'down') sel = (sel + 1) % items.length
+        const d = digitSelect(k, items.length); if (d >= 0) sel = d
         if (k.type === 'enter') { close(); resolve(sel) }
         if (k.type === 'ctrl-c' || (k.type === 'char' && k.ch === 'q')) { close(); resolve(items.length - 1) }
         draw()

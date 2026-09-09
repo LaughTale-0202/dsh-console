@@ -19,6 +19,15 @@ export function decodeKey(buf) {
   return { type: 'char', ch: buf.toString('utf8') }
 }
 
+/** 把数字键解释为 0-based 选项下标：`1`→0、…`9`→8；列表长度≥10 时 `0`→9（第 10 项）。
+ * 不匹配（非数字或越界）返回 -1，调用方应忽略。支持任意键盘数字区（小键盘 Numpad 通常为相同字符码）。 */
+export function digitSelect(key, count) {
+  if (count <= 0 || key?.type !== 'char') return -1
+  if (!/^[0-9]$/.test(key.ch)) return -1
+  const idx = (key.ch === '0' ? 10 : Number(key.ch)) - 1
+  return idx >= 0 && idx < count ? idx : -1
+}
+
 export function startInput(onKey) {
   if (!process.stdin.isTTY) throw new Error('需要交互式终端（TTY）')
   process.stdin.setRawMode(true)

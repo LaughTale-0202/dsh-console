@@ -1,16 +1,17 @@
 /** 各页共用的 UI 帮手：菜单选择与暂停。 */
 import { renderFooter, renderMenu, renderHeader } from '../ui/components.js'
-import { startInput } from '../ui/input.js'
+import { startInput, digitSelect } from '../ui/input.js'
 import { paint } from '../ui/screen.js'
 
-/** 简单菜单：返回所选下标或 esc(=null)。 */
+/** 简单菜单：返回所选下标或 esc(=null)。数字键可直接跳到对应编号项。 */
 export function choose(items, { title, esc = null } = {}) {
   let sel = 0
   return new Promise((resolve) => {
-    const draw = () => paint([renderHeader(title), '', ...renderMenu({ items, selected: sel }), '', renderFooter('↑↓ 选择 · Enter 确认 · Esc 返回')])
+    const draw = () => paint([renderHeader(title), '', ...renderMenu({ items, selected: sel }), '', renderFooter('↑↓ / 数字 选择 · Enter 确认 · Esc 返回')])
     const stop = startInput((k) => {
       if (k.type === 'up') sel = (sel + items.length - 1) % items.length
       if (k.type === 'down') sel = (sel + 1) % items.length
+      const d = digitSelect(k, items.length); if (d >= 0) sel = d
       if (k.type === 'enter') { stop(); resolve(sel) }
       if (k.type === 'esc' || k.type === 'ctrl-c') { stop(); resolve(esc) }
       draw()
@@ -23,10 +24,11 @@ export function choose(items, { title, esc = null } = {}) {
 export function listPick({ title, topLines = [], items }) {
   let sel = 0
   return new Promise((resolve) => {
-    const draw = () => paint([renderHeader(title), '', ...topLines, ...renderMenu({ items, selected: sel }), '', renderFooter('↑↓ 选择 · Enter 确认 · Esc 返回')])
+    const draw = () => paint([renderHeader(title), '', ...topLines, ...renderMenu({ items, selected: sel }), '', renderFooter('↑↓ / 数字 选择 · Enter 确认 · Esc 返回')])
     const stop = startInput((k) => {
       if (k.type === 'up') sel = (sel + items.length - 1) % items.length
       if (k.type === 'down') sel = (sel + 1) % items.length
+      const d = digitSelect(k, items.length); if (d >= 0) sel = d
       if (k.type === 'enter') { stop(); resolve(sel) }
       if (k.type === 'esc' || k.type === 'ctrl-c') { stop(); resolve(null) }
       draw()

@@ -9,11 +9,20 @@ test('菜单光标只在选中行', () => {
   assert.ok(!stripAnsi(rows[1]).includes('❯'))
 })
 
-test('菜单标签列按显示宽度对齐（无 hint 时两行等宽）', () => {
-  const rows = renderMenu({ items: [{ label: '启动服务' }, { label: 'stop' }], selected: 0 })
+test('菜单每行带编号且编号递增', () => {
+  const rows = renderMenu({ items: [{ label: '启动服务' }, { label: '停止服务' }, { label: '返回' }], selected: 1 })
+  const nums = rows.map(r => stripAnsi(r).match(/^\s+.\s+(\d+)\./)?.[1])
+  assert.deepEqual(nums, ['1', '2', '3'])
+})
+
+test('菜单标签列按显示宽度对齐（含编号列，各行等宽）', () => {
+  const items = [{ label: '启动服务' }, { label: 'stop' }]
+  const rows = renderMenu({ items, selected: 0 })
   const widths = rows.map(r => stringWidth(stripAnsi(r)))
+  const digits = String(items.length).length
   assert.equal(widths[0], widths[1])
-  assert.equal(widths[1], 2 + 2 + 20 + 2)
+  // 前导2 + 光标1 + 空格1 + 编号(digits+1) + 空格1 + 标签20 + hint/标签后两空格
+  assert.equal(widths[1], 2 + 1 + 1 + (digits + 1) + 1 + 20 + 2)
 })
 
 test('进度条渲染', () => {

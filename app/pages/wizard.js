@@ -1,6 +1,6 @@
 /** 首次运行向导（规格 §8）：位置 → 环境 → 构建 → 可选模型。 */
 import { S } from '../ui/ansi.js'
-import { startInput, textInput } from '../ui/input.js'
+import { startInput, textInput, digitSelect } from '../ui/input.js'
 import { renderFooter, renderHeader, renderRule, renderMenu, SPINNER } from '../ui/components.js'
 import { paint } from '../ui/screen.js'
 import { pickFolder } from '../core/native.js'
@@ -18,10 +18,11 @@ export async function wizardPage(ctx) {
   const way = await new Promise((resolve) => {
     const items = [{ label: '浏览选择文件夹…', hint: '系统对话框' }, { label: '手动输入路径', hint: '粘贴完整路径' }]
     let sel = 0
-    const draw = () => paint([head('1/4'), renderRule(), '', ...renderMenu({ items, selected: sel }), '', renderFooter('Enter 确认 · Esc 退出')])
+    const draw = () => paint([head('1/4'), renderRule(), '', ...renderMenu({ items, selected: sel }), '', renderFooter('↑↓ / 数字 选择 · Enter 确认 · Esc 退出')])
     const stop = startInput((k) => {
       if (k.type === 'up') sel = (sel + items.length - 1) % items.length
       if (k.type === 'down') sel = (sel + 1) % items.length
+      const d = digitSelect(k, items.length); if (d >= 0) sel = d
       if (k.type === 'enter') { stop(); resolve(sel) }
       if (k.type === 'esc' || k.type === 'ctrl-c') { stop(); resolve(-1) }
       draw()
