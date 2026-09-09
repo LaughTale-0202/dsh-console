@@ -1,0 +1,10 @@
+{
+  "name": "dsh-console",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "deepseek-harness 鎺у埗鍙板惎鍔ㄥ櫒",
+  "engines": { "node": "^22.19.0 || >=24.0.0" },
+  "dependencies": { "yaml": "^2.8.0" },
+  "scripts": { "test": "node --test app" }
+}
