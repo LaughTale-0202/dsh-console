@@ -1,14 +1,40 @@
-/** 项目更新：pull → install → build → 可选重启（规格 §5）。 */
+/** 更新：source 走 git pull → install → build；npm 走 npm install -g @deepseek-ai/dsh@latest。 */
 import { S } from '../ui/ansi.js'
 import { startInput } from '../ui/input.js'
 import { renderFooter, renderHeader, renderRule, SPINNER } from '../ui/components.js'
 import { paint } from '../ui/screen.js'
-import { gitHeadOf, runCommand } from '../core/lifecycle.js'
+import { dshVersionOf, gitHeadOf, runCommand } from '../core/lifecycle.js'
 import { runInstallBuild } from '../core/pipeline.js'
 import { buildInstallEnv } from '../core/presets.js'
 import { pause } from './shared.js'
 
+/** npm 全局模式：npm install -g @deepseek-ai/dsh@latest，按版本前后对比报告结果。 */
+async function updateNpm(ctx, { restartHook }) {
+  const before = await dshVersionOf({ mode: 'npm' })
+  let frame = 0
+  const tail = []
+  const timer = setInterval(() => paint([renderHeader('项目更新'), renderRule(), '',
+    `  ${S.accent}${SPINNER[frame++ % SPINNER.length]}${S.reset} npm install -g @deepseek-ai/dsh@latest`, '',
+    ...tail.slice(-10).map((l) => `  ${S.dim}${l.slice(0, 110)}${S.reset}`), '']), 150)
+  const r = await runCommand({ cmd: 'npm', args: ['install', '-g', '@deepseek-ai/dsh@latest'], onLine: (l) => tail.push(l) })
+  clearInterval(timer)
+  if (r.code !== 0) {
+    paint([renderHeader('项目更新'), '', `  ${S.red}✗ npm 更新失败${S.reset}`, ...r.tail.slice(-6).map((l) => `  ${l.slice(0, 110)}`), '', renderFooter('Enter 返回')])
+    await pause('Enter 返回')
+    return
+  }
+  const after = await dshVersionOf({ mode: 'npm' })
+  if (before === after) {
+    paint([renderHeader('项目更新'), '', `  ${S.green}✓${S.reset} 已是最新（${before ?? '未知'}）`, ''])
+    await pause('Enter 返回')
+    return
+  }
+  paint([renderHeader('项目更新'), '', `  ${S.green}✓${S.reset} ${String(before ?? '旧版本')} → ${String(after ?? '新版本')}，全局 dsh 已更新`, ''])
+  if (restartHook) await restartHook()
+}
+
 export async function updatePage(ctx, { restartHook } = {}) {
+  if (ctx.config.launch?.mode === 'npm') return updateNpm(ctx, { restartHook })
   const root = ctx.config.project.path
   const dirty = await runCommand({ cmd: 'git', args: ['-C', root, 'status', '--porcelain'] })
   if (dirty.code === 0 && dirty.tail.length > 0) {
