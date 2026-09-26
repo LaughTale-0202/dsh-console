@@ -16,6 +16,7 @@ test('缺失返回 null；保存后读回并补默认键', () => {
   assert.equal(cfg.project.path, 'C:\\x')
   assert.equal(cfg.presets.intranet.enabled, false)
   assert.equal(cfg.service.port, 3080)
+  assert.equal(cfg.launch.mode, 'source')
 })
 
 test('未知版本拒绝加载', () => {

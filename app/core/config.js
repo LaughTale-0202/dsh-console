@@ -5,6 +5,8 @@ export const CONFIG_VERSION = 1
 
 export const DEFAULT_CONFIG = {
   version: CONFIG_VERSION,
+  /** 启动方式：source=本地源码检出（pnpm dsh web）；npm=全局 npm 安装（dsh web）。 */
+  launch: { mode: 'source' },
   project: { path: null, lastInstallAt: 0, lastBuildHead: null, lastStartAt: 0 },
   service: { port: 3080, autoOpenBrowser: true },
   model: { provider: null, baseUrl: null, modelId: null, apiKeySet: false, apiKeyRef: null },
