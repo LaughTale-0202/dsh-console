@@ -32,6 +32,12 @@ test('dsh 命令组装：patch 先于应用级选项', () => {
     ['pnpm', 'dsh', 'web', '--patch', 'C:\\x y\\p.yml', '--port', '8080', '--no-open'])
 })
 
+test('dsh 命令组装：npm 全局模式直接走 dsh web', () => {
+  assert.deepEqual(buildDshCommand({ mode: 'npm' }), ['dsh', 'web'])
+  assert.deepEqual(buildDshCommand({ mode: 'npm', port: 9090, autoOpenBrowser: false, patches: ['p.yml'] }),
+    ['dsh', 'web', '--patch', 'p.yml', '--port', '9090', '--no-open'])
+})
+
 test('子进程 env 必含 corepack 非交互', () => {
   const env = childEnv({ FOO: '1' })
   assert.equal(env.COREPACK_ENABLE_DOWNLOAD_PROMPT, '0')

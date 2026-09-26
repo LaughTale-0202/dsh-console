@@ -24,9 +24,10 @@ export function planGates({ nodeModulesExists, lockMtime, pkgMtime, lastInstallA
 }
 
 /** dsh 启动命令组装。要点：`--patch` 属启动器级选项，必须排在应用级（--port/--no-open）之前，
- * 因为启动器在遇到第一个非自身选项后即停止解析后续 `--patch`。 */
-export function buildDshCommand({ port = 3080, autoOpenBrowser = true, patches = [] }) {
-  const args = ['pnpm', 'dsh', 'web']
+ * 因为启动器在遇到第一个非自身选项后即停止解析后续 `--patch`。
+ * mode：source=本地源码检出（pnpm dsh web）；npm=全局 npm 安装（dsh web）。 */
+export function buildDshCommand({ mode = 'source', port = 3080, autoOpenBrowser = true, patches = [] }) {
+  const args = mode === 'npm' ? ['dsh', 'web'] : ['pnpm', 'dsh', 'web']
   for (const p of patches) args.push('--patch', p)
   if (port !== 3080) args.push('--port', String(port))
   if (!autoOpenBrowser) args.push('--no-open')
@@ -96,18 +97,36 @@ export function gitHeadOf(root) {
     r.code === 0 ? r.tail.at(-1)?.trim() ?? null : null)
 }
 
-/** corepack 是 .cmd：经 cmd.exe 执行；含空格的参数整体加引号。 */
+/** corepack / dsh 都是 .cmd：经 cmd.exe 执行；含空格的参数整体加引号。 */
+function cmdWrap(prefix, args) {
+  return ['/c', ...prefix, ...args.map((a) => (a.includes(' ') ? `"${a}"` : a))]
+}
+
 function corepackArgs(args) {
-  return ['/c', 'corepack', ...args.map((a) => (a.includes(' ') ? `"${a}"` : a))]
+  return cmdWrap(['corepack'], args)
 }
 
 export function runPnpm({ projectRoot, args, env, onLine, maxTail, logFile }) {
   return runCommand({ cmd: 'cmd.exe', args: corepackArgs(['pnpm', ...args]), cwd: projectRoot, env: childEnv(env), onLine, maxTail, logFile })
 }
 
-export function startService({ projectRoot, port, autoOpenBrowser, patches, env, onLine, timeoutMs = 120000 }) {
+/** 按启动方式执行 dsh 子命令：source 经 corepack pnpm 跑本地检出；npm 直接用 PATH 上的全局 dsh。 */
+export function runDsh({ mode = 'source', projectRoot, args, env, onLine, maxTail, logFile }) {
+  const full = mode === 'npm' ? ['dsh', ...args] : ['pnpm', 'dsh', ...args]
+  return runCommand({ cmd: 'cmd.exe', args: cmdWrap([], full), cwd: projectRoot, env: childEnv(env), onLine, maxTail, logFile })
+}
+
+/** 读取当前 dsh 版本（`dsh --version`），失败或不可用返回 null。 */
+export async function dshVersionOf({ mode = 'source', projectRoot }) {
+  const r = await runDsh({ mode, projectRoot, args: ['--version'], maxTail: 1 })
+  if (r.code !== 0) return null
+  return r.tail.at(-1)?.trim() || null
+}
+
+export function startService({ mode = 'source', projectRoot, port, autoOpenBrowser, patches, env, onLine, timeoutMs = 120000 }) {
   return new Promise((resolve, reject) => {
-    const args = corepackArgs(buildDshCommand({ port, autoOpenBrowser, patches }))
+    const command = buildDshCommand({ mode, port, autoOpenBrowser, patches })
+    const args = mode === 'npm' ? cmdWrap([], command) : corepackArgs(command)
     const child = spawn('cmd.exe', args, { cwd: projectRoot, env: childEnv(env), stdio: ['ignore', 'pipe', 'pipe'] })
     let settled = false
     let url = null
