@@ -3,7 +3,7 @@ import { S, padEnd, truncate, stringWidth } from '../ui/ansi.js'
 import { startInput, digitSelect } from '../ui/input.js'
 import { renderFooter, renderHeader, renderRule } from '../ui/components.js'
 import { paint } from '../ui/screen.js'
-import { runPnpm } from '../core/lifecycle.js'
+import { runPnpm, runDsh } from '../core/lifecycle.js'
 import { CORE_ROW_IDS, parseDump, writeOverlay, upsertCacheEntry, dropCacheEntry, classifyRow, describeRow } from '../core/plugins.js'
 
 const ORIGIN_META = {
@@ -34,9 +34,15 @@ function wrapText(text, cols) {
 }
 
 /** 拉取当前 web 组合（不含本工具 overlay，反映官方默认 + 用户 ~/.dsh patch）。
- * 解析只用 stdout：pnpm 的横幅/警告在 stderr，混入会破坏 YAML。 */
+ * 解析只用 stdout：pnpm/启动横幅的警告在 stderr，混入会破坏 YAML。
+ * 按启动方式分流：source 走本地检出 pnpm dsh；npm 走 PATH 全局 dsh。 */
 export async function gatherRows(ctx) {
-  const r = await runPnpm({ projectRoot: ctx.config.project.path, args: ['dsh', 'web', '--dump-config'], maxTail: 0 })
+  const r = await runDsh({
+    mode: ctx.config.launch?.mode,
+    projectRoot: ctx.config.launch?.mode === 'npm' ? null : ctx.config.project.path,
+    args: ['web', '--dump-config'],
+    maxTail: 0,
+  })
   if (r.code !== 0) throw new Error(`dump-config 失败：\n${r.tail.slice(-6).join('\n')}`)
   const text = (r.stdoutLines?.length ?? 0) > 0 ? r.stdoutLines.join('\n') : r.tail.join('\n')
   return parseDump(text)
@@ -77,7 +83,7 @@ export async function pluginsPage(ctx, { restartHook } = {}) {
   // 先给即时反馈：dump 需要跑子进程，避免停在上一屏像是卡住。
   paint([renderHeader('插件管理', '读取中…'), '', `  ${S.cyan}⠹ 正在读取插件列表…${S.reset}`, ''])
   const rows = await gatherRows(ctx)
-  const root = ctx.config.project.path
+  const root = ctx.config.launch?.mode === 'npm' ? null : ctx.config.project.path
   // 预计算 origin/description（pkgDir 扫描只做一次）
   const memo = {}
   for (const row of rows) memo[row.id] = {
