@@ -31,6 +31,8 @@ export function clearInFlight() {
  */
 export async function runInstallBuild(config, { save, onLine, installEnv = {} } = {}) {
   if (typeof save !== 'function') throw new Error('runInstallBuild 需要 opts.save 以持久化进度')
+  // npm 全局模式没有本地检出：无需安装/构建。
+  if (config.launch?.mode === 'npm') return { install: false, build: false }
   const root = config.project.path
   const gates = planGates({
     nodeModulesExists: existsSync(join(root, 'node_modules')),
