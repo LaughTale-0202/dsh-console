@@ -59,6 +59,14 @@ test('分类与描述', () => {
   assert.equal(basePackageName('@deepseek-ai/dsh-session/invariant'), '@deepseek-ai/dsh-session')
 })
 
+test('分类与描述：npm 全局模式（无本地检出，projectRoot 为 null）', () => {
+  assert.equal(classifyRow({ id: 'x', name: '@deepseek-ai/dsh-llm' }, null), 'system')
+  assert.equal(classifyRow({ id: 'x', name: '@deepseek-ai/dsh-llm' }, ''), 'system')
+  assert.equal(classifyRow({ id: 'x', name: './my-plugin' }, null), 'custom')
+  assert.equal(classifyRow({ id: 'x', name: 'dsh-pet-sprite' }, null), 'custom')
+  assert.equal(describeRow({ id: 'x', name: '@deepseek-ai/dsh-llm' }, null), null)
+})
+
 test('overlay 渲染与缓存操作', () => {
   const text = renderOverlay([{ id: 'tool-web', mode: 'off' }, { id: 'ui-schedule', mode: 'on' }])
   assert.ok(text.includes('- id: tool-web') && text.includes('disabled: true'))

@@ -43,10 +43,12 @@ export function parseDump(text) {
   throw new Error(`dump 输出解析失败：${err?.message ?? '无法识别为行数组'}`)
 }
 
-/** 在 packages 的 group/pkg 两级中定位给定（包名或其子路径所属）包目录；找不到返回 null。 */
+/** 在 packages 的 group/pkg 两级中定位给定（包名或其子路径所属）包目录；找不到返回 null。
+ * npm 全局模式没有本地检出（projectRoot 为 null），直接返回 null。 */
 export function pkgDir(projectRoot, name) {
   const target = basePackageName(name)
   if (target === '') return null
+  if (typeof projectRoot !== 'string' || projectRoot === '') return null
   const groups = join(projectRoot, 'packages')
   if (!existsSync(groups)) return null
   for (const group of readdirSync(groups, { withFileTypes: true })) {
