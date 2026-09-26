@@ -19,17 +19,21 @@ export function validateProjectPath(p) {
 /** 默认模型段读取路径；schema 研究确认后如需改动只需改此常量。 */
 export const DEFAULT_MODEL_NS = 'agent-default-model'
 
-export function statusSnapshot({ config, owners, settingsDoc }) {
+export function statusSnapshot({ config, owners, settingsDoc, dshVersion }) {
   const port = config.service.port
   const running = owners.length > 0
   const model = settingsDoc?.getIn([DEFAULT_MODEL_NS, 'model'])
+  const npmMode = config.launch?.mode === 'npm'
   const head = config.project.lastBuildHead
   return {
     service: running ? '运行中' : '已停止',
     url: `http://127.0.0.1:${String(port)}`,
     model: typeof model === 'string' ? model : '未配置',
-    build: typeof head === 'string' ? head.slice(0, 7) : '未构建',
+    build: npmMode
+      ? (typeof dshVersion === 'string' && dshVersion !== '' ? `dsh ${dshVersion}` : '未知版本')
+      : (typeof head === 'string' ? head.slice(0, 7) : '未构建'),
     preset: config.presets?.intranet?.enabled ? '内网预设' : '公网直连',
+    launch: npmMode ? 'npm 全局' : '本地源码',
   }
 }
 
