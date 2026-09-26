@@ -10,7 +10,7 @@ import { renderFooter, renderHeader, renderMenu, renderRule, renderStatusRow, SP
 import { paint } from './ui/screen.js'
 import { DEFAULT_CONFIG, loadConfig, saveConfig } from './core/config.js'
 import { findPortOwners, killTree } from './core/port.js'
-import { startService } from './core/lifecycle.js'
+import { dshVersionOf, startService } from './core/lifecycle.js'
 import { IN_FLIGHT, LOGS_DIR, TOOL_ROOT, clearInFlight, runInstallBuild } from './core/pipeline.js'
 import { buildLaunchEnv, buildInstallEnv } from './core/presets.js'
 import { readSettingsDoc, statusSnapshot, validateProjectPath } from './pages/status.js'
@@ -32,6 +32,17 @@ function ensurePathForChildren() {
 }
 
 let CONFIG = null
+let dshVersionCache = null
+
+/** npm 模式刷新全局 dsh 版本缓存（source 模式清空）。 */
+async function refreshDshVersion() {
+  if (CONFIG.launch?.mode !== 'npm') { dshVersionCache = null; return }
+  dshVersionCache = await dshVersionOf({ mode: 'npm' }).catch(() => null)
+}
+
+function npmGlobalRoot() {
+  return join(process.env.APPDATA || join(homedir(), 'AppData', 'Roaming'), 'npm')
+}
 
 function ctx() {
   return {
@@ -90,13 +101,17 @@ async function actionStart() {
   const { owners, yes } = await confirmStopOwners(CONFIG.service.port)
   if (owners.length > 0 && !yes) return
   for (const { pid } of owners) await killTree(pid)
-  const busy = busyLoop('准备中（安装/构建按需执行）')
+  const npmMode = CONFIG.launch?.mode === 'npm'
+  const busy = busyLoop(npmMode ? '准备启动…' : '准备中（安装/构建按需执行）')
   let service
   try {
-    await runInstallBuild(CONFIG, { save: c.save, onLine: busy.push, installEnv: buildInstallEnv(CONFIG.presets.intranet) })
+    if (!npmMode) {
+      await runInstallBuild(CONFIG, { save: c.save, onLine: busy.push, installEnv: buildInstallEnv(CONFIG.presets.intranet) })
+    }
     busy.stop()
     const ready = busyLoop('正在启动 dsh web …')
     service = await startService({
+      mode: CONFIG.launch?.mode,
       projectRoot: CONFIG.project.path,
       port: CONFIG.service.port,
       autoOpenBrowser: CONFIG.service.autoOpenBrowser,
@@ -184,9 +199,10 @@ async function offerRestart() {
 }
 
 async function actionOpen() {
+  const npmMode = CONFIG.launch?.mode === 'npm'
   const items = [
     { label: '打开 Web UI', target: `http://127.0.0.1:${String(CONFIG.service.port)}` },
-    { label: '打开项目目录', target: CONFIG.project.path ?? '.' },
+    { label: npmMode ? '打开 npm 全局目录' : '打开项目目录', target: npmMode ? npmGlobalRoot() : CONFIG.project.path ?? '.' },
     { label: '打开 ~/.dsh 配置目录', target: DSH_HOME },
     { label: '打开工具日志目录', target: LOGS_DIR },
     { label: '返回', target: null },
@@ -208,6 +224,7 @@ async function actionOpen() {
 
 async function actionSettings() {
   const items = () => [
+    { label: `启动方式  ${CONFIG.launch?.mode === 'npm' ? 'npm 全局' : '本地源码'}` },
     { label: `项目路径  ${CONFIG.project.path ?? '未设置'}` },
     { label: `端口      ${String(CONFIG.service.port)}` },
     { label: `启动开浏览器  ${CONFIG.service.autoOpenBrowser ? '开' : '关'}` },
@@ -229,21 +246,35 @@ async function actionSettings() {
       })
       draw()
     })
-    if (pick === -1 || pick === 4) return
+    if (pick === -1 || pick === 5) return
     if (pick === 0) {
+      // 切换启动方式：npm <-> source。切到 source 且没项目路径时先要求填路径。
+      const next = CONFIG.launch?.mode === 'npm' ? 'source' : 'npm'
+      if (next === 'source' && !CONFIG.project.path) {
+        const input = await textInput({ prompt: '本地源码模式需要项目路径' })
+        if (input === null) continue
+        const v = validateProjectPath(input.trim())
+        if (!v.ok) { process.stdout.write(`\r\n  ${S.red}✗ ${v.reason}${S.reset}\r\n`); continue }
+        CONFIG.project.path = input.trim()
+      }
+      CONFIG.launch.mode = next
+      ctx().save()
+      await refreshDshVersion()
+    }
+    if (pick === 1) {
       const input = await textInput({ prompt: '新项目路径' })
       if (input) {
         const v = validateProjectPath(input.trim())
         if (v.ok) { CONFIG.project.path = input.trim(); ctx().save() } else process.stdout.write(`\r\n  ${S.red}✗ ${v.reason}${S.reset}\r\n`)
       }
     }
-    if (pick === 1) {
+    if (pick === 2) {
       const input = await textInput({ prompt: '新端口（1-65535）' })
       const p = Number(input)
       if (input && Number.isInteger(p) && p > 0 && p < 65536) { CONFIG.service.port = p; ctx().save() }
     }
-    if (pick === 2) { CONFIG.service.autoOpenBrowser = !CONFIG.service.autoOpenBrowser; ctx().save() }
-    if (pick === 3) {
+    if (pick === 3) { CONFIG.service.autoOpenBrowser = !CONFIG.service.autoOpenBrowser; ctx().save() }
+    if (pick === 4) {
       try {
         const link = await createDesktopShortcut(TOOL_ROOT)
         process.stdout.write(`\r\n  ${S.green}✓ 已创建：${link}${S.reset}\r\n`)
@@ -296,12 +327,12 @@ async function mainLoop() {
     let sel = 0
     let menuOpen = true
     let stopInputFn = null
-    const snap = () => statusSnapshot({ config: CONFIG, owners: ownersCache.value, settingsDoc: readSettingsDoc(DSH_HOME) })
+    const snap = () => statusSnapshot({ config: CONFIG, owners: ownersCache.value, settingsDoc: readSettingsDoc(DSH_HOME), dshVersion: dshVersionCache })
     const draw = () => {
       const s = snap()
       paint([
         renderHeader('dsh 控制台', 'v0.1.0'), '',
-        renderStatusRow('项目', String(CONFIG.project.path ?? '未设置')),
+        renderStatusRow('项目', CONFIG.launch?.mode === 'npm' ? `npm 全局${dshVersionCache ? `（${dshVersionCache}）` : ''}` : String(CONFIG.project.path ?? '未设置')),
         renderStatusRow('服务', `${s.service} · ${s.url}`, ownersCache.value.length > 0 ? 'ok' : 'off'),
         renderStatusRow('模型', s.model),
         renderStatusRow('构建', s.build),
@@ -333,7 +364,7 @@ async function mainLoop() {
     if (pick === 3) await safeAction('插件管理', () => pluginsPage(ctx(), { restartHook: offerRestart }))
     if (pick === 4) await safeAction('模型与凭据', () => modelPage(ctx()))
     if (pick === 5) await safeAction('启动预设', () => presetsPage(ctx()))
-    if (pick === 6) await safeAction('项目更新', () => updatePage(ctx(), { restartHook: offerRestart }))
+    if (pick === 6) await safeAction('项目更新', async () => { await updatePage(ctx(), { restartHook: offerRestart }); await refreshDshVersion() })
     if (pick === 7) await safeAction('快捷打开', actionOpen)
     if (pick === 8) await safeAction('工具设置', actionSettings)
   }
@@ -349,6 +380,7 @@ export async function run() {
     CONFIG = loadConfig(CONFIG_FILE)
   }
   CONFIG = CONFIG ?? config
+  await refreshDshVersion()
   // 上次任务未正常结束提示
   if (existsSync(IN_FLIGHT)) {
     let label = ''
